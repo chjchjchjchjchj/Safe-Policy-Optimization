@@ -32,7 +32,15 @@ class ACTLayer(nn.Module):
         self.mixed_action = False
         self.multi_discrete = False
         self.action_type = action_space.__class__.__name__
-        action_dim = action_space.shape[0]
+        # import gym
+        # if isinstance(action_space, gym.spaces.Box):
+        # import ipdb; ipdb.set_trace()
+        import gymnasium as gym
+        if isinstance(action_space, gym.spaces.Box):
+            action_dim = action_space.shape[0]
+        elif isinstance(action_space, gym.spaces.Discrete):
+            action_dim = action_space.n
+        # action_dim = action_space.shape[0]
         self.action_out = DiagGaussian(inputs_dim, action_dim, use_orthogonal, gain, args)
     
     def forward(self, x, available_actions=None, deterministic=False):

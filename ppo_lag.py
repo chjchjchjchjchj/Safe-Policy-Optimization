@@ -38,10 +38,12 @@ from safepo.common.buffer import VectorizedOnPolicyBuffer
 from safepo.common.env import make_sa_mujoco_env, make_sa_isaac_env
 from safepo.common.lagrange import Lagrange
 from safepo.common.logger import EpochLogger
-from safepo.common.model import ActorVCritic
+from safepo.common.model import ActorVCritic, ActorVCritic_Discrete
 from safepo.utils.config import single_agent_args, isaac_gym_map, parse_sim_params
 import ipdb
 from cross_bar import *
+import gym
+
 default_cfg = {
     'hidden_sizes': [64, 64],
     'gamma': 0.99,
@@ -74,21 +76,28 @@ def main(args, cfg_env=None):
     device = torch.device(f'{args.device}:{args.device_id}')
 
 
-    if args.task not in isaac_gym_map.keys():
-        env, obs_space, act_space = make_sa_mujoco_env(
-            num_envs=args.num_envs, env_id=args.task, seed=args.seed
-        )
-        eval_env, _, _ = make_sa_mujoco_env(num_envs=1, env_id=args.task, seed=None)
-        config = default_cfg
+    # if args.task not in isaac_gym_map.keys():
+    #     env, obs_space, act_space = make_sa_mujoco_env(
+    #         num_envs=args.num_envs, env_id=args.task, seed=args.seed
+    #     )
+    #     eval_env, _, _ = make_sa_mujoco_env(num_envs=1, env_id=args.task, seed=None)
+    #     config = default_cfg
 
-    else:
-        sim_params = parse_sim_params(args, cfg_env, None)
-        env = make_sa_isaac_env(args=args, cfg=cfg_env, sim_params=sim_params)
-        eval_env = env
-        obs_space = env.observation_space
-        act_space = env.action_space
-        args.num_envs = env.num_envs
-        config = isaac_gym_specific_cfg
+    # else:
+    #     sim_params = parse_sim_params(args, cfg_env, None)
+    #     env = make_sa_isaac_env(args=args, cfg=cfg_env, sim_params=sim_params)
+    #     eval_env = env
+    #     obs_space = env.observation_space
+    #     act_space = env.action_space
+    #     args.num_envs = env.num_envs
+    #     config = isaac_gym_specific_cfg
+
+    # Initialize cross_bar environment
+    env = CrossBarEnv(env_id="cross_bar")
+    eval_env = CrossBarEnv(env_id="cross_bar")
+    obs_space = env._observation_space
+    act_space = env._action_space
+    config = default_cfg
 
     # set training steps
     steps_per_epoch = config.get("steps_per_epoch", args.steps_per_epoch)
@@ -96,7 +105,12 @@ def main(args, cfg_env=None):
     local_steps_per_epoch = steps_per_epoch // args.num_envs
     epochs = total_steps // steps_per_epoch
     # create the actor-critic module
-    policy = ActorVCritic(
+    # policy = ActorVCritic(
+    #     obs_dim=obs_space.shape[0],
+    #     act_dim=act_space.shape[0],
+    #     hidden_sizes=config["hidden_sizes"],
+    # ).to(device)
+    policy = ActorVCritic_Discrete(
         obs_dim=obs_space.shape[0],
         act_dim=act_space.shape[0],
         hidden_sizes=config["hidden_sizes"],

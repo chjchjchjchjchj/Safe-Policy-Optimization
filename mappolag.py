@@ -33,6 +33,96 @@ from safepo.common.buffer import SeparatedReplayBuffer
 from safepo.common.logger import EpochLogger
 from safepo.utils.config import multi_agent_args, parse_sim_params, set_np_formatting, set_seed, multi_agent_velocity_map, isaac_gym_map, multi_agent_goal_tasks
 
+from cross_bar2 import CrossBarEnv
+from distutils.util import strtobool
+import argparse
+import yaml
+def multi_agent_args(algo):
+
+    # Define custom parameters
+    custom_parameters = [
+        {"name": "--use-eval", "type": lambda x: bool(strtobool(x)), "default": False, "help": "Use evaluation environment for testing"},
+        {"name": "--task", "type": str, "default": "CrossBar-v1", "help": "Multi-agent env in cross_bar"},
+        {"name": "--agent-conf", "type": str, "default": "2x4", "help": "The agent configuration"},
+        {"name": "--scenario", "type": str, "default": "CrossBar", "help": "The scenario"},
+        {"name": "--experiment", "type": str, "default": "Base", "help": "Experiment name"},
+        {"name": "--seed", "type": int, "default":0, "help": "Random seed"},
+        {"name": "--model-dir", "type": str, "default": "", "help": "Choose a model dir"},
+        {"name": "--cost-limit", "type": float, "default": 25.0, "help": "cost_lim"},
+        {"name": "--device", "type": str, "default": "cpu", "help": "The device to run the model on"},
+        {"name": "--device-id", "type": int, "default": 0, "help": "The device id to run the model on"},
+        {"name": "--write-terminal", "type": lambda x: bool(strtobool(x)), "default": True, "help": "Toggles terminal logging"},
+        {"name": "--headless", "type": lambda x: bool(strtobool(x)), "default": False, "help": "Toggles headless mode"},
+        {"name": "--total-steps", "type": int, "default": None, "help": "Total timesteps of the experiments"},
+        {"name": "--num-envs", "type": int, "default": None, "help": "The number of parallel game environments"},
+        {"name": "--randomize", "type": bool, "default": False, "help": "Wheather to randomize the environments' initial states"},
+    ]
+    # Create argument parser
+    parser = argparse.ArgumentParser(description="RL Policy")
+    issac_parameters = copy.deepcopy(custom_parameters)
+    for param in custom_parameters:
+        param_name = param.pop("name")
+        parser.add_argument(param_name, **param)
+
+    # Parse arguments
+
+    args = parser.parse_args()
+
+    if args.task in isaac_gym_map.keys():
+        try:
+            from isaacgym import gymutil
+        except ImportError:
+            raise Exception("Please install isaacgym to run Isaac Gym tasks!")
+        args = gymutil.parse_arguments(description="RL Policy", custom_parameters=issac_parameters)
+        args.device = args.sim_device_type if args.use_gpu_pipeline else 'cpu'
+    cfg_train_path = "marl_cfg/{}/config.yaml".format(algo)
+    import ipdb; ipdb.set_trace()
+    base_path = os.path.dirname(os.path.abspath(__file__)).replace("utils", "multi_agent")
+    with open(os.path.join(base_path, cfg_train_path), 'r') as f:
+        cfg_train = yaml.load(f, Loader=yaml.SafeLoader)
+        if args.task in multi_agent_velocity_map.keys():
+            cfg_train.update(cfg_train.get("mamujoco"))
+            args.agent_conf = multi_agent_velocity_map[args.task]["agent_conf"]
+            args.scenario = multi_agent_velocity_map[args.task]["scenario"]
+        elif args.task in multi_agent_goal_tasks:
+            cfg_train.update(cfg_train.get("mamujoco"))
+
+    cfg_train["use_eval"] = args.use_eval
+    cfg_train["cost_limit"]=args.cost_limit
+    cfg_train["algorithm_name"]=algo
+    cfg_train["device"] = args.device + ":" + str(args.device_id)
+
+    cfg_train["env_name"] = args.task
+
+    if args.total_steps:
+        cfg_train["num_env_steps"] = args.total_steps
+    if args.num_envs:
+        cfg_train["n_rollout_threads"] = args.num_envs
+        cfg_train["n_eval_rollout_threads"] = args.num_envs
+    relpath = time.strftime("%Y-%m-%d-%H-%M-%S")
+    subfolder = "-".join(["seed", str(args.seed).zfill(3)])
+    relpath = "-".join([subfolder, relpath])
+    # cfg_train['log_dir']="../runs/"+args.experiment+'/'+args.task+'/'+algo+'/'+relpath
+    cfg_train['log_dir']="runs/"+args.experiment+'/'+args.task+'/'+algo+'/'+relpath
+    cfg_env={}
+    if args.task in isaac_gym_map.keys():
+        cfg_env_path = "marl_cfg/{}.yaml".format(isaac_gym_map[args.task])
+        with open(os.path.join(base_path, cfg_env_path), 'r') as f:
+            cfg_env = yaml.load(f, Loader=yaml.SafeLoader)
+            cfg_env["name"] = args.task
+            if "task" in cfg_env:
+                if "randomize" not in cfg_env["task"]:
+                    cfg_env["task"]["randomize"] = args.randomize
+                else:
+                    cfg_env["task"]["randomize"] = False
+            else:
+                cfg_env["task"] = {"randomize": False}
+    elif args.task in multi_agent_velocity_map.keys() or args.task in multi_agent_goal_tasks:
+        pass
+    else:
+        warn_task_name()
+
+    return args, cfg_env, cfg_train
 
 def check(input):
     output = torch.from_numpy(input) if type(input) == np.ndarray else input
@@ -600,36 +690,40 @@ class Runner:
 def train(args, cfg_train):
     agent_index = [[[0, 1, 2, 3, 4, 5]],
                    [[0, 1, 2, 3, 4, 5]]]
-    if args.task in multi_agent_velocity_map:
-        env = make_ma_mujoco_env(
-        scenario=args.scenario, # "Ant"
-        agent_conf=args.agent_conf, # '2x4'
-        seed=args.seed, # 0
-        cfg_train=cfg_train,
-    )
-        cfg_eval = copy.deepcopy(cfg_train)
-        cfg_eval["seed"] = args.seed + 10000
-        cfg_eval["n_rollout_threads"] = cfg_eval["n_eval_rollout_threads"]
-        eval_env = make_ma_mujoco_env(
-        scenario=args.scenario,
-        agent_conf=args.agent_conf,
-        seed=cfg_eval['seed'],
-        cfg_train=cfg_eval,
-    )
-    elif args.task in isaac_gym_map:
-        sim_params = parse_sim_params(args, cfg_env, cfg_train)
-        env = make_ma_isaac_env(args, cfg_env, cfg_train, sim_params, agent_index)
-        cfg_train["n_rollout_threads"] = env.num_envs
-        cfg_train["n_eval_rollout_threads"] = env.num_envs
-        eval_env = env
-    elif args.task in multi_agent_goal_tasks:
-        env = make_ma_multi_goal_env(task=args.task, seed=args.seed, cfg_train=cfg_train)
-        cfg_eval = copy.deepcopy(cfg_train)
-        cfg_eval["seed"] = args.seed + 10000
-        cfg_eval["n_rollout_threads"] = cfg_eval["n_eval_rollout_threads"]
-        eval_env = make_ma_multi_goal_env(task=args.task, seed=args.seed + 10000, cfg_train=cfg_eval)
-    else: 
-        raise NotImplementedError
+    # if args.task in multi_agent_velocity_map:
+    #     env = make_ma_mujoco_env(
+    #     scenario=args.scenario,
+    #     agent_conf=args.agent_conf,
+    #     seed=args.seed,
+    #     cfg_train=cfg_train,
+    # )
+    #     cfg_eval = copy.deepcopy(cfg_train)
+    #     cfg_eval["seed"] = args.seed + 10000
+    #     cfg_eval["n_rollout_threads"] = cfg_eval["n_eval_rollout_threads"]
+    #     eval_env = make_ma_mujoco_env(
+    #     scenario=args.scenario,
+    #     agent_conf=args.agent_conf,
+    #     seed=cfg_eval['seed'],
+    #     cfg_train=cfg_eval,
+    # )
+    # elif args.task in isaac_gym_map:
+    #     sim_params = parse_sim_params(args, cfg_env, cfg_train)
+    #     env = make_ma_isaac_env(args, cfg_env, cfg_train, sim_params, agent_index)
+    #     cfg_train["n_rollout_threads"] = env.num_envs
+    #     cfg_train["n_eval_rollout_threads"] = env.num_envs
+    #     eval_env = env
+    # elif args.task in multi_agent_goal_tasks:
+    #     env = make_ma_multi_goal_env(task=args.task, seed=args.seed, cfg_train=cfg_train)
+    #     cfg_eval = copy.deepcopy(cfg_train)
+    #     cfg_eval["seed"] = args.seed + 10000
+    #     cfg_eval["n_rollout_threads"] = cfg_eval["n_eval_rollout_threads"]
+    #     eval_env = make_ma_multi_goal_env(task=args.task, seed=args.seed + 10000, cfg_train=cfg_eval)
+    # else: 
+    #     raise NotImplementedError
+
+    # Use your custom environment
+    env = CrossBarEnv(env_id='cross_bar')
+    eval_env = CrossBarEnv(env_id='cross_bar')
     
     torch.set_num_threads(4)
     runner = Runner(env, eval_env, cfg_train, args.model_dir)
@@ -643,9 +737,10 @@ if __name__ == '__main__':
     set_np_formatting()
     args, cfg_env, cfg_train = multi_agent_args(algo="mappolag")
     set_seed(cfg_train.get("seed", -1), cfg_train.get("torch_deterministic", False))
-    from argparse import Namespace
-    args=Namespace(agent_conf='2x4', cost_limit=25.0, device='cpu', device_id=0, experiment='Base', headless=False, model_dir='', num_envs=None, randomize=False, scenario='Ant', seed=0, task='Safety2x4AntVelocity-v0', total_steps=None, use_eval=False, write_terminal=True)
-    
+    # print(f"args={args}")
+    # import sys;sys.exit()
+    # from argparse import Namespace
+    # args=Namespace(agent_conf='2x4', cost_limit=25.0, device='cpu', device_id=0, experiment='Base', headless=False, model_dir='', num_envs=None, randomize=False, scenario='Ant', seed=0, task='Safety2x4AntVelocity-v0', total_steps=None, use_eval=False, write_terminal=True)
     if args.write_terminal:
         train(args=args, cfg_train=cfg_train)
     else:

@@ -17,6 +17,7 @@
 import torch.nn as nn
 
 from safepo.utils.util import init
+import gymnasium as gym
 
 """MLP modules."""
 
@@ -55,7 +56,11 @@ class MLPBase(nn.Module):
         self._stacked_frames = config["stacked_frames"]
         self._layer_N = config["layer_N"]
         self.hidden_size = config["hidden_size"]
-
+        # import ipdb; ipdb.set_trace()
+        # if isinstance(obs_shape, gym.spaces.Box):
+        #     obs_dim = obs_shape[0]
+        # elif isinstance(obs_shape, gym.spaces.Discrete):
+        #     obs_dim = (1,)
         obs_dim = obs_shape[0]
 
         if self._use_feature_normalization:

@@ -217,8 +217,8 @@ class SeparatedReplayBuffer(object):
     """
     
     def __init__(self, config, obs_space, share_obs_space, act_space):
-        self.episode_length = config["episode_length"]
-        self.n_rollout_threads = config["n_rollout_threads"]
+        self.episode_length = config["episode_length"] # 1000
+        self.n_rollout_threads = config["n_rollout_threads"] # 10
         self.rnn_hidden_size = config["hidden_size"]
         self.recurrent_N = config["recurrent_N"]
         self.gamma = config["gamma"]
@@ -229,9 +229,17 @@ class SeparatedReplayBuffer(object):
         self._use_proper_time_limits = config["use_proper_time_limits"]
         self.device = config.get("device", "cpu")
         self.algo = config["algorithm_name"]
-
-        obs_shape = get_shape_from_obs_space(obs_space)
-        share_obs_shape = get_shape_from_obs_space(share_obs_space)
+        import gymnasium as gym
+        if isinstance(obs_space, gym.spaces.Box):
+            obs_shape = obs_space.shape
+        elif isinstance(obs_space, gym.spaces.Discrete):
+            obs_shape = (1,)
+        if isinstance(share_obs_space, gym.spaces.Box):
+            share_obs_shape = share_obs_space.shape
+        elif isinstance(share_obs_space, gym.spaces.Discrete):
+            share_obs_shape = (1,)
+        # obs_shape = get_shape_from_obs_space(obs_space)
+        # share_obs_shape = get_shape_from_obs_space(share_obs_space)
 
         if type(obs_shape[-1]) == list:
             obs_shape = obs_shape[:1] # del
@@ -258,8 +266,11 @@ class SeparatedReplayBuffer(object):
             self.available_actions = torch.ones(self.episode_length + 1, self.n_rollout_threads, act_space.n, device=self.device)
         else:
             self.available_actions = None
-
-        act_shape = get_shape_from_act_space(act_space)
+        if isinstance(act_space, gym.spaces.Box):
+            act_shape = get_shape_from_act_space(act_space)
+        elif isinstance(act_space, gym.spaces.Discrete):
+            act_shape = act_space.n
+        # act_shape = get_shape_from_act_space(act_space)
 
         self.actions = torch.zeros(self.episode_length, self.n_rollout_threads, act_shape, device=self.device)
         self.action_log_probs = torch.zeros(self.episode_length, self.n_rollout_threads, act_shape, device=self.device)

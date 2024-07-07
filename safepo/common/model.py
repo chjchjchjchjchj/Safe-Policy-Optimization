@@ -25,7 +25,7 @@ from safepo.utils.act import ACTLayer
 from safepo.utils.mlp import MLPBase
 from safepo.utils.util import check, init
 from safepo.utils.util import get_shape_from_obs_space
-
+import torch.nn.functional as F
 
 def build_mlp_network(sizes):
     """
@@ -79,6 +79,18 @@ class Actor(nn.Module):
         mean = self.mean(obs)
         std = torch.exp(self.log_std)
         return Normal(mean, std)
+    
+class Actor_Discrete(nn.Module):
+
+    def __init__(self, obs_dim: int, act_dim: int, hidden_sizes: list = [64, 64]):
+        super().__init__()
+        self.fcs = build_mlp_network([obs_dim]+hidden_sizes+[act_dim])
+
+    def forward(self, obs: torch.Tensor):
+        x = F.relu(self.fcs(obs))
+        import ipdb; ipdb.set_trace()
+        prob = F.softmax(x, dim=-1)
+        return prob
 
 
 class VCritic(nn.Module):
@@ -168,6 +180,47 @@ class ActorVCritic(nn.Module):
         value_r = self.reward_critic(obs)
         value_c = self.cost_critic(obs)
         return action, log_prob, value_r, value_c
+    
+class ActorVCritic_Discrete(nn.Module):
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes: list = [64, 64]):
+        super().__init__()
+        self.reward_critic = VCritic(obs_dim, hidden_sizes)
+        self.cost_critic = VCritic(obs_dim, hidden_sizes)
+        self.actor = Actor_Discrete(obs_dim, act_dim, hidden_sizes)
+
+    def get_value(self, obs):
+        """
+        Estimate the value of observations using the critic network.
+
+        Args:
+            obs (torch.Tensor): Input observation tensor.
+
+        Returns:
+            torch.Tensor: Estimated value for the input observation.
+        """
+        return self.critic(obs)
+
+    def step(self, obs, deterministic=False):
+        """
+        Take a policy step based on observations.
+
+        Args:
+            obs (torch.Tensor): Input observation tensor.
+            deterministic (bool): Flag indicating whether to take a deterministic action.
+
+        Returns:
+            tuple: Tuple containing action tensor, log probabilities of the action, reward value estimate,
+                   and cost value estimate.
+        """
+
+        probs = self.actor(obs)
+        action_dist = torch.distributions.Categorical(probs)
+        action = action_dist.sample()
+        log_prob = action_dist.log_prob(action)
+        value_r = self.reward_critic(obs)
+        value_c = self.cost_critic(obs)
+        return action, log_prob, value_r, value_c
 
 class MultiAgentActor(nn.Module):
     """
@@ -217,8 +270,12 @@ class MultiAgentActor(nn.Module):
         self._use_recurrent_policy = config["use_recurrent_policy"]
         self._recurrent_N = config["recurrent_N"]
         self.tpdv = dict(dtype=torch.float32, device=device)
-
-        obs_shape = get_shape_from_obs_space(obs_space)
+        import gymnasium as gym
+        if isinstance(obs_space, gym.spaces.Box):
+            obs_shape = obs_space.shape
+        elif isinstance(obs_space, gym.spaces.Discrete):
+            obs_shape = (1,)
+        # obs_shape = get_shape_from_obs_space(obs_space)
         base =  MLPBase
         self.base = base(self.config, obs_shape)
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain, self.config)
@@ -328,8 +385,13 @@ class MultiAgentCritic(nn.Module):
         self._recurrent_N = config["recurrent_N"]
         self.tpdv = dict(dtype=torch.float32, device=device)
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][self._use_orthogonal]
+        import gymnasium as gym
+        if isinstance(cent_obs_space, gym.spaces.Box):
+            cent_obs_shape = cent_obs_space.shape
+        elif isinstance(cent_obs_space, gym.spaces.Discrete):
+            cent_obs_shape = (1,)
 
-        cent_obs_shape = get_shape_from_obs_space(cent_obs_space)
+        # cent_obs_shape = get_shape_from_obs_space(cent_obs_space)
         base =  MLPBase
         self.base = base(config, cent_obs_shape)
 
